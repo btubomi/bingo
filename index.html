@@ -32,18 +32,35 @@ table {
 }
 td {
   border: 1px solid #333;
-  width: 50px;
-  height: 50px;
+  width: 60px;
+  height: 60px;
+
+  /* ✅ ここが重要 */
+  padding: 0;
+  text-align: center;
+  vertical-align: middle;
 }
-input {
+
+td input {
   width: 100%;
   height: 100%;
+
+  /* ✅ inputのズレを完全に消す */
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+
+  box-sizing: border-box;
   text-align: center;
-  font-size: 16px;
+  font-size: 20px;
+}
+td input:disabled {
+  opacity: 1;              /* disabledでも薄くしない */
+  cursor: default;
 }
 .free {
   background: #ffe680;
-  font-weight: bold;
 }
 #result {
   font-size: 22px;
@@ -62,6 +79,23 @@ input {
   color: #000;
   font-weight: bold;
 }
+
+td.selected {
+  box-shadow: inset 0 0 0 3px #007bff;
+}
+
+/* Chrome / Edge / Safari */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Firefox */
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
 </style>
 </head>
 
@@ -78,8 +112,29 @@ input {
 <h3>③ ビンゴカード（修正可）</h3>
 <table id="bingo"></table>
 
+<h3>🔧 カード位置補正</h3>
+<button onclick="shiftCard(-1, 0)">⬅ 左</button>
+<button onclick="shiftCard(1, 0)">➡ 右</button>
+<button onclick="shiftCard(0, -1)">⬆ 上</button>
+<button onclick="shiftCard(0, 1)">⬇ 下</button>
+
+<h3>🔧 部分ずらし補正</h3>
+<button onclick="shiftFromSelectedRightFlowDown()">
+  ▶ 選択位置から右へ（下に流す）
+</button>
+
+
 <h3>④ 抽選済み番号</h3>
-<input id="called" placeholder="例: 3,7,12,25,40" style="width:90%">
+
+<input id="calledInput" type="number"
+  min="1" max="75"
+  placeholder="番号"
+  style="width:120px; font-size:18px;">
+
+
+<button onclick="addCalledNumber()">追加</button>
+
+<div id="calledList" style="margin-top:8px; font-size:16px;"></div>
 
 <br>
 <button onclick="checkBingo()">✅ 判定</button>
@@ -89,6 +144,8 @@ input {
 <script>
 const video = document.getElementById("video");
 let stream = null;
+let calledNumbers = [];
+let selectedCell = null;
 
 // ビンゴ表生成
 const table = document.getElementById("bingo");
@@ -101,6 +158,13 @@ for (let r = 0; r < 5; r++) {
     const td = document.createElement("td");
     const input = document.createElement("input");
 
+// クリックされたマスを記録
+td.addEventListener("click", () => {
+  selectedCell = { r, c };
+  highlightSelected(r, c);
+});
+
+
     // FREEマス（中央）
     if (r === 2 && c === 2) {
       input.value = "FREE";
@@ -108,6 +172,9 @@ for (let r = 0; r < 5; r++) {
       input.className = "free";
     } else {
       input.type = "number";
+      input.min = 1;
+      input.max = 75;
+      input.classList.add("hide-spin");
     }
 
     td.appendChild(input);
@@ -174,10 +241,7 @@ function capture() {
 
 // ビンゴ判定（FREE常時ヒット）
 function checkBingo() {
-  const called = document.getElementById("called").value
-    .split(",")
-    .map(n => parseInt(n.trim()))
-    .filter(n => !isNaN(n));
+  const called = calledNumbers;
 
   const hit = Array.from({ length: 5 }, () => Array(5).fill(false));
 
@@ -246,6 +310,107 @@ function clearHighlights() {
       cells[r][c].classList.remove("hit", "line-bingo");
     }
   }
+}
+
+function addCalledNumber() {
+  const input = document.getElementById("calledInput");
+  const value = parseInt(input.value);
+
+  if (isNaN(value)) return;
+
+  // 重複防止
+  if (!calledNumbers.includes(value)) {
+    calledNumbers.push(value);
+  }
+
+  input.value = "";      // 入力欄クリア
+  updateCalledList();    // 表示更新
+}
+
+function updateCalledList() {
+  document.getElementById("calledList").innerText =
+    "現在の抽選番号: " + calledNumbers.join(", ");
+}
+
+function shiftCard(dx, dy) {
+  // 現在の値を退避
+  const temp = Array.from({ length: 5 }, () => Array(5).fill(""));
+
+  for (let r = 0; r < 5; r++) {
+    for (let c = 0; c < 5; c++) {
+      if (r === 2 && c === 2) continue; // FREE
+      temp[r][c] = cells[r][c].value;
+    }
+  }
+
+  // 一旦クリア
+  for (let r = 0; r < 5; r++) {
+    for (let c = 0; c < 5; c++) {
+      if (!(r === 2 && c === 2)) {
+        cells[r][c].value = "";
+      }
+    }
+  }
+
+  // ずらして再配置
+  for (let r = 0; r < 5; r++) {
+    for (let c = 0; c < 5; c++) {
+      const nr = r + dy;
+      const nc = c + dx;
+
+      if (nr < 0 || nr > 4 || nc < 0 || nc > 4) continue;
+      if (nr === 2 && nc === 2) continue;
+
+      cells[nr][nc].value = temp[r][c];
+    }
+  }
+}
+
+function shiftFromSelectedRightFlowDown() {
+  if (!selectedCell) {
+    alert("ずらす起点のマスを選択してください");
+    return;
+  }
+
+  const { r, c } = selectedCell;
+
+  // FREEを除いたセル座標リストを作成
+  const positions = [];
+  for (let i = 0; i < 5; i++) {
+    for (let j = 0; j < 5; j++) {
+      if (!(i === 2 && j === 2)) {
+        positions.push({ r: i, c: j });
+      }
+    }
+  }
+
+  // 選択セルの index を取得
+  const startIndex = positions.findIndex(
+    p => p.r === r && p.c === c
+  );
+  if (startIndex === -1) return;
+
+  // 起点以降の値を取得
+  const values = positions
+    .slice(startIndex)
+    .map(p => cells[p.r][p.c].value);
+
+  // 1つ右へ（先頭に空を入れる）
+  values.unshift("");
+  values.pop(); // 末尾は自然に下へ流れる
+
+  // 再配置
+  for (let i = 0; i < values.length; i++) {
+    const pos = positions[startIndex + i];
+    cells[pos.r][pos.c].value = values[i];
+  }
+}
+
+function highlightSelected(r, c) {
+  const tds = document.querySelectorAll("#bingo td");
+  tds.forEach(td => td.classList.remove("selected"));
+
+  table.rows[r].cells[c].classList.add("selected");
 }
 </script>
 
