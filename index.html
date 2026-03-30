@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>ビンゴ OCR 判定（FREEマス対応）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<!-- Tesseract OCR -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+<style>
+body {
+  font-family: system-ui, sans-serif;
+  background: #f5f5f5;
+  padding: 10px;
+  text-align: center;
+}
+video {
+  width: 100%;
+  max-width: 400px;
+  border: 2px solid #333;
+  background: black;
+}
+button {
+  padding: 10px 16px;
+  margin: 6px;
+  font-size: 16px;
+}
+table {
+  margin: 10px auto;
+  border-collapse: collapse;
+}
+td {
+  border: 1px solid #333;
+  width: 50px;
+  height: 50px;
+}
+input {
+  width: 100%;
+  height: 100%;
+  text-align: center;
+  font-size: 16px;
+}
+.free {
+  background: #ffe680;
+  font-weight: bold;
+}
+#result {
+  font-size: 22px;
+  font-weight: bold;
+  margin-top: 10px;
+}
+/* 抽選済み番号（ヒット） */
+.hit {
+  background: #fff3b0; /* 黄色 */
+  font-weight: bold;
+}
+
+/* ビンゴライン（最優先） */
+.line-bingo {
+  background: #ff6666;
+  color: #000;
+  font-weight: bold;
+}
+</style>
+</head>
+
+<body>
+
+<h2>📸 ビンゴ OCR 判定（FREE対応）</h2>
+
+<button onclick="startCamera()">① カメラ起動</button><br>
+<video id="video" autoplay playsinline></video><br>
+<button onclick="capture()">② 撮影してOCR</button>
+
+<canvas id="canvas" hidden></canvas>
+
+<h3>③ ビンゴカード（修正可）</h3>
+<table id="bingo"></table>
+
+<h3>④ 抽選済み番号</h3>
+<input id="called" placeholder="例: 3,7,12,25,40" style="width:90%">
+
+<br>
+<button onclick="checkBingo()">✅ 判定</button>
+
+<div id="result"></div>
+
+<script>
+const video = document.getElementById("video");
+let stream = null;
+
+// ビンゴ表生成
+const table = document.getElementById("bingo");
+const cells = [];
+
+for (let r = 0; r < 5; r++) {
+  const tr = document.createElement("tr");
+  cells[r] = [];
+  for (let c = 0; c < 5; c++) {
+    const td = document.createElement("td");
+    const input = document.createElement("input");
+
+    // FREEマス（中央）
+    if (r === 2 && c === 2) {
+      input.value = "FREE";
+      input.disabled = true;
+      input.className = "free";
+    } else {
+      input.type = "number";
+    }
+
+    td.appendChild(input);
+    tr.appendChild(td);
+    cells[r][c] = input;
+  }
+  table.appendChild(tr);
+}
+
+// カメラ起動
+function startCamera() {
+  navigator.mediaDevices.getUserMedia({
+    video: { facingMode: "environment" }
+  }).then(s => {
+    stream = s;
+    video.srcObject = stream;
+  }).catch(err => alert("カメラ起動失敗: " + err.message));
+}
+
+// OCR実行
+function capture() {
+  if (!stream) {
+    alert("先にカメラを起動してください");
+    return;
+  }
+
+  // ✅ 再撮影時に色・結果をリセット
+  clearHighlights();
+  document.getElementById("result").innerText = "";
+
+  const canvas = document.getElementById("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext("2d").drawImage(video, 0, 0);
+
+  Tesseract.recognize(canvas, "eng", {
+    tessedit_char_whitelist: "0123456789"
+  }).then(({ data }) => {
+
+    console.log("OCR結果:", data.text);
+
+    const nums = data.text.match(/\d+/g) || [];
+
+    // FREE以外をクリア
+    for (let r = 0; r < 5; r++) {
+      for (let c = 0; c < 5; c++) {
+        if (!(r === 2 && c === 2)) {
+          cells[r][c].value = "";
+        }
+      }
+    }
+
+    // 取れた分だけ表示
+    let index = 0;
+    for (let r = 0; r < 5; r++) {
+      for (let c = 0; c < 5; c++) {
+        if (r === 2 && c === 2) continue; // FREE
+        if (index >= nums.length) return;
+        cells[r][c].value = nums[index++];
+      }
+    }
+  });
+}
+
+// ビンゴ判定（FREE常時ヒット）
+function checkBingo() {
+  const called = document.getElementById("called").value
+    .split(",")
+    .map(n => parseInt(n.trim()))
+    .filter(n => !isNaN(n));
+
+  const hit = Array.from({ length: 5 }, () => Array(5).fill(false));
+
+  clearHighlights();
+
+  // ヒット判定（FREE含む）
+  for (let r = 0; r < 5; r++) {
+    for (let c = 0; c < 5; c++) {
+      if (r === 2 && c === 2) {
+        hit[r][c] = true; // FREE
+      } else {
+        const v = parseInt(cells[r][c].value);
+        if (!isNaN(v) && called.includes(v)) {
+          hit[r][c] = true;
+          cells[r][c].classList.add("hit"); // ← 黄色
+        }
+      }
+    }
+  }
+
+  let bingo = false;
+
+  // 横ライン
+  for (let r = 0; r < 5; r++) {
+    if (hit[r].every(v => v)) {
+      bingo = true;
+      for (let c = 0; c < 5; c++) {
+        cells[r][c].classList.add("line-bingo");
+      }
+    }
+  }
+
+  // 縦ライン
+  for (let c = 0; c < 5; c++) {
+    if (hit.map(r => r[c]).every(v => v)) {
+      bingo = true;
+      for (let r = 0; r < 5; r++) {
+        cells[r][c].classList.add("line-bingo");
+      }
+    }
+  }
+
+  // 斜め（左上 → 右下）
+  if ([0,1,2,3,4].every(i => hit[i][i])) {
+    bingo = true;
+    for (let i = 0; i < 5; i++) {
+      cells[i][i].classList.add("line-bingo");
+    }
+  }
+
+  // 斜め（右上 → 左下）
+  if ([0,1,2,3,4].every(i => hit[i][4 - i])) {
+    bingo = true;
+    for (let i = 0; i < 5; i++) {
+      cells[i][4 - i].classList.add("line-bingo");
+    }
+  }
+
+  document.getElementById("result").innerText =
+    bingo ? "🎉 BINGO！" : "❌ まだビンゴではありません";
+}
+
+function clearHighlights() {
+  for (let r = 0; r < 5; r++) {
+    for (let c = 0; c < 5; c++) {
+      cells[r][c].classList.remove("hit", "line-bingo");
+    }
+  }
+}
+</script>
+
+</body>
+</html>
